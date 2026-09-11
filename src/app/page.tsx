@@ -6,7 +6,8 @@ type Signal = { id:string; kind:string; sourceId:string; score:number; observedA
 type Inference = { id:string; inferenceType:string; subjectScope:string; statement:string; confidence:number; inferredAt:string; evidenceObservationIds:string[] };
 type Prediction = { id:string; statement:string; probability:number; status:string; resolvesAt:string; subjectScope:string };
 type Outcome = { id:string; predictionId:string; outcome:boolean; actualValue:number; targetValue:number; brierScore:number; resolvedAt:string };
-type QueryResponse<T> = { result:T; llmProvider:string; epistemicContract?:Record<string,string> };
+type QueryRows<T> = { classification:string; rows:T };
+type QueryResponse<T> = { result:QueryRows<T>; llmProvider:string; epistemicContract?:Record<string,string> };
 
 type Snapshot = {
   observations: Observation[];
@@ -20,11 +21,12 @@ const empty: Snapshot = { observations:[], signals:[], inferences:[], prediction
 const tabs = ["overview","observations","signals","inferences","predictions","outcomes"] as const;
 type Tab = typeof tabs[number];
 
-async function query<T>(kind:string, limit=100):Promise<T> {
+async function queryRows<T>(kind:string, limit=100):Promise<T[]> {
   const response = await fetch(`/api/query?kind=${kind}&limit=${limit}`, { cache:"no-store" });
-  const body: QueryResponse<T> = await response.json();
-  if (!response.ok) throw new Error((body as any)?.error ?? `Query failed: ${response.status}`);
-  return body.result;
+  const body: QueryResponse<T[]> & { error?: string } = await response.json();
+  if (!response.ok) throw new Error(body?.error ?? `Query failed: ${response.status}`);
+  if (!body?.result || !Array.isArray(body.result.rows)) throw new Error(`Invalid query payload for ${kind}`);
+  return body.result.rows;
 }
 
 function age(ts:string) {
@@ -45,7 +47,7 @@ export default function Home() {
     setLoading(true); setError(null);
     try {
       const [observations,signals,inferences,predictions,outcomes] = await Promise.all([
-        query<Observation[]>("observations"), query<Signal[]>("signals"), query<Inference[]>("inferences"), query<Prediction[]>("predictions"), query<Outcome[]>("outcomes"),
+        queryRows<Observation>("observations"), queryRows<Signal>("signals"), queryRows<Inference>("inferences"), queryRows<Prediction>("predictions"), queryRows<Outcome>("outcomes"),
       ]);
       setData({observations,signals,inferences,predictions,outcomes});
     } catch (e) { setError(String(e)); }
@@ -67,7 +69,6 @@ export default function Home() {
   useEffect(()=>{ void refresh(); },[]);
 
   const openPredictions = useMemo(()=>data.predictions.filter(p=>p.status==="open"),[data.predictions]);
-  const resolvedPredictions = useMemo(()=>data.predictions.filter(p=>p.status==="resolved"),[data.predictions]);
   const meanBrier = data.outcomes.length ? data.outcomes.reduce((s,o)=>s+o.brierScore,0)/data.outcomes.length : null;
   const latestInference = data.inferences[0];
 
@@ -93,7 +94,7 @@ export default function Home() {
       <div className="split"><section><h2>ACTIVE ORACLE</h2>{openPredictions.length?openPredictions.slice(0,3).map(p=><div className="row" key={p.id}><span className="classification">PREDICTION</span><p>{p.statement}</p><small>{(p.probability*100).toFixed(1)}% · resolves {new Date(p.resolvesAt).toLocaleString()}</small></div>):<p className="muted">No open predictions.</p>}</section><section><h2>RECENT OUTCOMES</h2>{data.outcomes.length?data.outcomes.slice(0,3).map(o=><div className="row" key={o.id}><span className="classification">OUTCOME · {o.outcome?"CONFIRMED":"MISSED"}</span><p>Actual {o.actualValue} / target {o.targetValue}</p><small>Brier {o.brierScore.toFixed(4)} · {age(o.resolvedAt)}</small></div>):<p className="muted">No resolved outcomes.</p>}</section></div>
     </>}
 
-    {tab==="observations" && <section><h2>LIVE OBSERVATION STREAM</h2>{data.observations.map(o=><div className="row" key={o.id}><span className="classification">OBSERVED FACT · {o.sourceId}</span><p><a href={o.url} target="_blank">{o.title}</a></p><small>{new Date(o.publishedAt).toLocaleString()}</small></div>)}</section>}
+    {tab==="observations" && <section><h2>LIVE OBSERVATION STREAM</h2>{data.observations.map(o=><div className="row" key={o.id}><span className="classification">OBSERVED FACT · {o.sourceId}</span><p><a href={o.url} target="_blank" rel="noreferrer">{o.title}</a></p><small>{new Date(o.publishedAt).toLocaleString()}</small></div>)}</section>}
     {tab==="signals" && <section><h2>ANOMALY / SIGNAL QUEUE</h2>{data.signals.map(s=><div className="row" key={s.id}><span className="classification">SIGNAL · {s.kind}</span><p>{s.sourceId} · score {Number(s.score).toFixed(2)}</p><small>{s.evidenceObservationIds?.length??0} evidence observations · {age(s.observedAt)}</small></div>)}</section>}
     {tab==="inferences" && <section><h2>INFERENCE LEDGER</h2>{data.inferences.map(i=><div className="row" key={i.id}><span className="classification">INFERENCE · {i.inferenceType}</span><p>{i.statement}</p><small>Confidence {(i.confidence*100).toFixed(1)}% · {i.evidenceObservationIds.length} evidence observations · {age(i.inferredAt)}</small></div>)}</section>}
     {tab==="predictions" && <section><h2>PREDICTION LEDGER</h2>{data.predictions.map(p=><div className="row" key={p.id}><span className="classification">PREDICTION · {p.status}</span><p>{p.statement}</p><small>{(p.probability*100).toFixed(1)}% · resolves {new Date(p.resolvesAt).toLocaleString()}</small></div>)}</section>}
