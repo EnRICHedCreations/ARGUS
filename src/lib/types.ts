@@ -32,6 +32,22 @@ export type Signal = {
   details?: Record<string, unknown>;
 };
 
+export type Prediction = {
+  id: string;
+  predictionType: "source_activity_elevated";
+  subjectScope: string;
+  statement: string;
+  predictedAt: string;
+  horizonHours: number;
+  resolvesAt: string;
+  probability: number;
+  status: "open" | "resolved" | "expired";
+  modelVersion: "deterministic_oracle_v1";
+  evidenceSignalIds: string[];
+  evidenceObservationIds: string[];
+  details: Record<string, unknown>;
+};
+
 export type Source = {
   id: string;
   name: string;
