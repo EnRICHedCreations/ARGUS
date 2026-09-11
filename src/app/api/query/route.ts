@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getInferences } from "@/lib/inference-store";
-import { getHypotheses, getPatterns } from "@/lib/reasoning-memory";
+import { getHypotheses, getHypothesisEvaluations, getPatterns } from "@/lib/reasoning-memory";
+import { getExpectationOutcomes, getExpectations } from "@/lib/expectation-memory";
 import { getObservations, getOutcomes, getPredictions, getSignals } from "@/lib/memory";
 import { runStructuredQuery, type QueryKind } from "@/lib/query";
 
-const allowed = new Set<QueryKind>(["summary","observations","signals","inferences","patterns","hypotheses","predictions","outcomes"]);
+const allowed = new Set<QueryKind>(["summary","observations","signals","inferences","patterns","hypotheses","hypothesis_evaluations","expectations","expectation_outcomes","predictions","outcomes"]);
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
     const source=request.nextUrl.searchParams.get("source")??undefined;
     const rawLimit=request.nextUrl.searchParams.get("limit");
     const limit=rawLimit==null?undefined:Number(rawLimit);
-    const [observations,signals,inferences,patterns,hypotheses,predictions,outcomes]=await Promise.all([getObservations(),getSignals(),getInferences(),getPatterns(),getHypotheses(),getPredictions(),getOutcomes()]);
-    return NextResponse.json({query:{kind,source:source??null,limit:limit??25},result:runStructuredQuery({kind,source,limit},{observations,signals,inferences,patterns,hypotheses,predictions,outcomes}),epistemicContract:{observed_fact:"directly supported by collected observations",signal:"deterministic/statistical detection",inference:"derived interpretation; not an observed fact",pattern:"deterministically detected multi-signal structure",hypothesis:"candidate explanation under competition; neither fact nor prediction",prediction:"falsifiable future claim",outcome:"observed resolution of a prior prediction"},llmProvider:"none",gate:10});
-  } catch(error){return NextResponse.json({error:String(error),gate:10},{status:500});}
+    const [observations,signals,inferences,patterns,hypotheses,hypothesisEvaluations,expectations,expectationOutcomes,predictions,outcomes]=await Promise.all([getObservations(),getSignals(),getInferences(),getPatterns(),getHypotheses(),getHypothesisEvaluations(),getExpectations(),getExpectationOutcomes(),getPredictions(),getOutcomes()]);
+    return NextResponse.json({query:{kind,source:source??null,limit:limit??25},result:runStructuredQuery({kind,source,limit},{observations,signals,inferences,patterns,hypotheses,hypothesisEvaluations,expectations,expectationOutcomes,predictions,outcomes}),epistemicContract:{observed_fact:"directly supported by collected observations",signal:"deterministic/statistical detection",inference:"derived interpretation; not an observed fact",pattern:"deterministically detected multi-signal structure",hypothesis:"candidate explanation under competition; neither fact nor prediction",hypothesis_evaluation:"recorded belief revision based on support and contradiction",expectation:"machine-resolvable evidence expectation generated from a hypothesis",expectation_outcome:"observed resolution of a hypothesis expectation",prediction:"falsifiable future claim",outcome:"observed resolution of a prior prediction"},llmProvider:"none",gate:12});
+  } catch(error){return NextResponse.json({error:String(error),gate:12},{status:500});}
 }
