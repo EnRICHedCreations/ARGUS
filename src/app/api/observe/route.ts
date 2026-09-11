@@ -14,6 +14,8 @@ import { rememberEntityGraphV2 } from "@/lib/graph-memory";
 import { derivePatterns } from "@/lib/patterns";
 import { deriveHypotheses } from "@/lib/hypotheses";
 import { evaluateHypotheses } from "@/lib/hypothesis-evaluator";
+import { applyExpectationOutcomes, deriveExpectations, resolveExpectations } from "@/lib/hypothesis-expectations";
+import { getExpectationOutcomes, getExpectations, rememberExpectationOutcomes, rememberExpectations } from "@/lib/expectation-memory";
 import { getHypotheses, getHypothesisEvaluations, getPatterns, rememberHypotheses, rememberHypothesisEvaluations, rememberPatterns } from "@/lib/reasoning-memory";
 import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getOutcomes, getPredictions, getSignals, remember, rememberOutcomes, rememberPredictions, rememberSignals } from "@/lib/memory";
 import { sources } from "@/lib/sources";
@@ -42,11 +44,24 @@ export async function POST() {
     try { await rememberInferences(inferences); } catch (error) { errors.push(`inferences:batch: ${String(error)}`); }
 
     const historicalPatterns = await getPatterns();
+    const persistedBefore = await getHypotheses();
+    const existingExpectations = await getExpectations();
+    const nowIso = new Date().toISOString();
+    const expectationOutcomes = resolveExpectations(existingExpectations, historicalPatterns, signals, nowIso);
+    if (expectationOutcomes.length) {
+      try {
+        await rememberExpectationOutcomes(expectationOutcomes);
+        await rememberHypotheses(applyExpectationOutcomes(persistedBefore, existingExpectations, expectationOutcomes));
+      } catch (error) { errors.push(`expectations:resolve: ${String(error)}`); }
+    }
+
     const patterns = derivePatterns(signals);
     const rawHypotheses = deriveHypotheses(patterns);
     const evaluated = evaluateHypotheses(rawHypotheses, patterns, historicalPatterns, signals);
     try { await rememberPatterns(patterns); } catch (error) { errors.push(`patterns:batch: ${String(error)}`); }
     try { await rememberHypotheses(evaluated.hypotheses); await rememberHypothesisEvaluations(evaluated.evaluations); } catch (error) { errors.push(`hypotheses:evaluation: ${String(error)}`); }
+    const newExpectations = deriveExpectations(evaluated.hypotheses);
+    try { await rememberExpectations(newExpectations); } catch (error) { errors.push(`expectations:create: ${String(error)}`); }
 
     const predictions = generatePredictions(signals);
     try { await rememberPredictions(predictions); } catch (error) { errors.push(`predictions:batch: ${String(error)}`); }
@@ -61,11 +76,13 @@ export async function POST() {
     const persistedPatterns = await getPatterns();
     const persistedHypotheses = await getHypotheses();
     const hypothesisEvaluations = await getHypothesisEvaluations();
-    return NextResponse.json({ observations: all.length, events: await getEventStats(), patterns: persistedPatterns, hypotheses: persistedHypotheses, hypothesisEvaluations, signals: await getSignals(), inferences: persistedInferences, predictions: persistedPredictions, outcomes, calibration: calibrationSummary(persistedPredictions, outcomes), errors, memory: "persistent", entities: await getEntityStats(), graph: await getGraphStats(), reasoning:{patternsGeneratedThisRun:patterns.length,hypothesesGeneratedThisRun:evaluated.hypotheses.length,evaluationsThisRun:evaluated.evaluations.length,contradictionsThisRun:evaluated.evaluations.reduce((n,e)=>n+e.contradictingEvidence.length,0),modelVersions:["deterministic_pattern_v1","deterministic_hypothesis_v1","deterministic_hypothesis_evaluator_v1"]}, analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { generatedThisRun: inferences.length, persisted: persistedInferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedThisRun: dueOutcomes.length, modelVersion: "deterministic_source_activity_v1" }, persistence: "batched", llmProvider:"none", gate: 11 });
-  } catch (error) { return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", llmProvider:"none", gate: 11 }, { status: 500 }); }
+    const expectations = await getExpectations();
+    const expectationHistory = await getExpectationOutcomes();
+    return NextResponse.json({ observations: all.length, events: await getEventStats(), patterns: persistedPatterns, hypotheses: persistedHypotheses, hypothesisEvaluations, expectations, expectationOutcomes: expectationHistory, signals: await getSignals(), inferences: persistedInferences, predictions: persistedPredictions, outcomes, calibration: calibrationSummary(persistedPredictions, outcomes), errors, memory: "persistent", entities: await getEntityStats(), graph: await getGraphStats(), reasoning:{patternsGeneratedThisRun:patterns.length,hypothesesGeneratedThisRun:evaluated.hypotheses.length,evaluationsThisRun:evaluated.evaluations.length,contradictionsThisRun:evaluated.evaluations.reduce((n,e)=>n+e.contradictingEvidence.length,0),expectationsCreatedThisRun:newExpectations.length,expectationsResolvedThisRun:expectationOutcomes.length,modelVersions:["deterministic_pattern_v1","deterministic_hypothesis_v1","deterministic_hypothesis_evaluator_v1","deterministic_expectation_resolver_v1"]}, analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { generatedThisRun: inferences.length, persisted: persistedInferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedThisRun: dueOutcomes.length, modelVersion: "deterministic_source_activity_v1" }, persistence: "batched", llmProvider:"none", gate: 12 });
+  } catch (error) { return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", llmProvider:"none", gate: 12 }, { status: 500 }); }
 }
 
 export async function GET() {
-  try { const signals = await getSignals(); const predictions = await getPredictions(); const outcomes = await getOutcomes(); const inferences = await getInferences(); return NextResponse.json({ sources, observations: (await getObservations()).slice(0,100), events:await getEventStats(), patterns:await getPatterns(), hypotheses:await getHypotheses(), hypothesisEvaluations:await getHypothesisEvaluations(), signals,inferences,predictions,outcomes,calibration:calibrationSummary(predictions,outcomes),entities:await getEntityStats(),graph:await getGraphStats(),analyst:{detectorCount:8,persistedSignalKinds:[...new Set(signals.map(signal=>signal.kind))]},inference:{persisted:inferences.length,modelVersion:"deterministic_signal_interpretation_v1"},oracle:{openPredictions:predictions.filter(prediction=>prediction.status==="open").length,modelVersion:"deterministic_oracle_v1"},resolver:{resolvedPredictions:outcomes.length,modelVersion:"deterministic_source_activity_v1"},memory:"persistent",persistence:"batched",llmProvider:"none",gate:11}); }
-  catch (error) { return NextResponse.json({ error:String(error),memory:"persistent",persistence:"batched",llmProvider:"none",gate:11 },{status:500}); }
+  try { const signals = await getSignals(); const predictions = await getPredictions(); const outcomes = await getOutcomes(); const inferences = await getInferences(); return NextResponse.json({ sources, observations: (await getObservations()).slice(0,100), events:await getEventStats(), patterns:await getPatterns(), hypotheses:await getHypotheses(), hypothesisEvaluations:await getHypothesisEvaluations(), expectations:await getExpectations(), expectationOutcomes:await getExpectationOutcomes(), signals,inferences,predictions,outcomes,calibration:calibrationSummary(predictions,outcomes),entities:await getEntityStats(),graph:await getGraphStats(),analyst:{detectorCount:8,persistedSignalKinds:[...new Set(signals.map(signal=>signal.kind))]},inference:{persisted:inferences.length,modelVersion:"deterministic_signal_interpretation_v1"},oracle:{openPredictions:predictions.filter(prediction=>prediction.status==="open").length,modelVersion:"deterministic_oracle_v1"},resolver:{resolvedPredictions:outcomes.length,modelVersion:"deterministic_source_activity_v1"},memory:"persistent",persistence:"batched",llmProvider:"none",gate:12}); }
+  catch (error) { return NextResponse.json({ error:String(error),memory:"persistent",persistence:"batched",llmProvider:"none",gate:12 },{status:500}); }
 }
