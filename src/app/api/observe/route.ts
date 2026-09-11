@@ -3,8 +3,9 @@ import { collect } from "@/lib/collector";
 import { detectVolumeSpike } from "@/lib/anomaly";
 import { runAnalyst } from "@/lib/analyst";
 import { extractEntities } from "@/lib/entities";
+import { generatePredictions } from "@/lib/oracle";
 import { deriveRelationships } from "@/lib/relationships";
-import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getSignals, remember, rememberEntityGraph, rememberSignals } from "@/lib/memory";
+import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getPredictions, getSignals, remember, rememberEntityGraph, rememberPredictions, rememberSignals } from "@/lib/memory";
 import { sources } from "@/lib/sources";
 
 export async function POST() {
@@ -45,37 +46,47 @@ export async function POST() {
     try { await rememberSignals(signals); }
     catch (error) { errors.push(`signals:batch: ${String(error)}`); }
 
+    const predictions = generatePredictions(signals);
+    try { await rememberPredictions(predictions); }
+    catch (error) { errors.push(`predictions:batch: ${String(error)}`); }
+
+    const persistedPredictions = await getPredictions();
     return NextResponse.json({
       observations: all.length,
       signals: await getSignals(),
+      predictions: persistedPredictions,
       errors,
       memory: "persistent",
       entities: await getEntityStats(),
       graph: await getGraphStats(),
       analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] },
+      oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" },
       persistence: "batched",
-      gate: 4,
+      gate: 5,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 4 }, { status: 500 });
+    return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 5 }, { status: 500 });
   }
 }
 
 export async function GET() {
   try {
     const signals = await getSignals();
+    const predictions = await getPredictions();
     return NextResponse.json({
       sources,
       observations: (await getObservations()).slice(0, 100),
       signals,
+      predictions,
       entities: await getEntityStats(),
       graph: await getGraphStats(),
       analyst: { detectorCount: 8, persistedSignalKinds: [...new Set(signals.map(signal => signal.kind))] },
+      oracle: { openPredictions: predictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" },
       memory: "persistent",
       persistence: "batched",
-      gate: 4,
+      gate: 5,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 4 }, { status: 500 });
+    return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 5 }, { status: 500 });
   }
 }
