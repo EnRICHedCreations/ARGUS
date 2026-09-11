@@ -2,39 +2,32 @@ import { createHash } from "node:crypto";
 import type { ArgusPattern } from "./patterns";
 
 export type ArgusHypothesis = {
-  id: string;
-  competitionGroup: string;
+  id: string; competitionGroup: string;
   hypothesisType: "shared_external_driver" | "independent_convergence" | "structural_transition";
-  statement: string;
-  generatedAt: string;
-  confidence: number;
-  rank: number;
-  status: "active" | "falsified";
-  supportScore: number;
-  contradictionScore: number;
-  expectedEvidence: string[];
-  falsifiers: string[];
+  statement: string; generatedAt: string; confidence: number; rank: number; status: "active" | "falsified";
+  supportScore: number; contradictionScore: number; expectedEvidence: string[]; falsifiers: string[];
   evidence: Array<{ type:"pattern"|"signal"|"observation"; id:string; polarity:"support"|"contradict"; weight:number }>;
-  details: Record<string, unknown>;
-  modelVersion: "deterministic_hypothesis_v1";
+  details: Record<string, unknown>; modelVersion: "deterministic_hypothesis_v1";
 };
+function hid(group:string,type:string){return createHash("sha256").update(`hypothesis\n${group}\n${type}`).digest("hex").slice(0,32);}
+function clamp(v:number){return Math.max(0.05,Math.min(0.95,v));}
+function evidence(pattern:ArgusPattern,weight=1){return[{type:"pattern" as const,id:pattern.id,polarity:"support" as const,weight},...pattern.evidenceSignalIds.map(id=>({type:"signal" as const,id,polarity:"support" as const,weight:.5}))];}
 
-function hid(group:string,type:string) { return createHash("sha256").update(`hypothesis\n${group}\n${type}`).digest("hex").slice(0,32); }
-function clamp(v:number) { return Math.max(0.05,Math.min(0.95,v)); }
-
-export function deriveHypotheses(patterns: ArgusPattern[]): ArgusHypothesis[] {
-  const out: ArgusHypothesis[] = [];
-  for (const pattern of patterns) {
-    const group = `pattern:${pattern.id}`;
-    const base = Math.min(0.82,0.35 + Math.log10(1+Math.max(0,pattern.score))*0.18 + Math.min(0.15,pattern.evidenceSignalIds.length*0.02));
-    const rows: Array<Omit<ArgusHypothesis,"id"|"rank">> = pattern.patternType === "cross_domain_convergence" ? [
-      {competitionGroup:group,hypothesisType:"shared_external_driver",statement:`A shared external condition may be contributing to the concurrent activity represented by ${pattern.scope}; current evidence establishes temporal convergence, not causality.`,generatedAt:pattern.detectedAt,confidence:clamp(base),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["additional independent domains become active in the same temporal window","new graph relationships appear between entities already implicated by the convergent domains","the convergence persists across a subsequent observation cycle"],falsifiers:["activity rapidly returns to baseline independently in each domain","no shared entities, locations, or temporal structure emerge after additional observations"],evidence:[{type:"pattern",id:pattern.id,polarity:"support",weight:1},...pattern.evidenceSignalIds.map(id=>({type:"signal" as const,id,polarity:"support" as const,weight:0.5}))],details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
-      {competitionGroup:group,hypothesisType:"independent_convergence",statement:`The concurrent activity across ${pattern.scope} may be coincidental or driven by separate local causes rather than one shared driver.`,generatedAt:pattern.detectedAt,confidence:clamp(0.85-base),status:"active",supportScore:Math.max(0.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["subsequent activity diverges by domain","no meaningful cross-domain entity or event links emerge","timing overlap weakens on later observation cycles"],falsifiers:["multiple domains continue moving together","shared entities, locations, or event chains connect previously independent domains"],evidence:[{type:"pattern",id:pattern.id,polarity:"support",weight:0.4}],details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
-    ] : [
-      {competitionGroup:group,hypothesisType:"structural_transition",statement:"The current cluster of graph and regime-change signals may represent a genuine structural transition in the observed world model rather than transient noise.",generatedAt:pattern.detectedAt,confidence:clamp(base+0.05),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["centrality or co-occurrence changes persist","new relationships accumulate around the same entities or event classes","subsequent change-point evidence remains directionally consistent"],falsifiers:["graph structure reverts on the next cycles","the implicated relationships disappear without additional supporting observations"],evidence:[{type:"pattern",id:pattern.id,polarity:"support",weight:1},...pattern.evidenceSignalIds.map(id=>({type:"signal" as const,id,polarity:"support" as const,weight:0.5}))],details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
-      {competitionGroup:group,hypothesisType:"independent_convergence",statement:"The apparent structural transition may be a short-lived combination of unrelated detector firings rather than one coherent change in the world model.",generatedAt:pattern.detectedAt,confidence:clamp(0.8-base),status:"active",supportScore:Math.max(0.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["detectors stop firing together","new evidence fails to reconnect the same entities or sources"],falsifiers:["the same structural pattern persists across subsequent cycles"],evidence:[{type:"pattern",id:pattern.id,polarity:"support",weight:0.35}],details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
-    ];
-    rows.sort((a,b)=>b.confidence-a.confidence).forEach((row,index)=>out.push({...row,id:hid(group,row.hypothesisType),rank:index+1}));
-  }
-  return out;
-}
+export function deriveHypotheses(patterns:ArgusPattern[]):ArgusHypothesis[]{const out:ArgusHypothesis[]=[];for(const pattern of patterns){const group=`pattern:${pattern.id}`;const base=Math.min(.82,.35+Math.log10(1+Math.max(0,pattern.score))*.18+Math.min(.15,pattern.evidenceSignalIds.length*.02));let rows:Array<Omit<ArgusHypothesis,"id"|"rank">>;
+ if(pattern.patternType==="cross_domain_convergence")rows=[
+  {competitionGroup:group,hypothesisType:"shared_external_driver",statement:`A shared external condition may be contributing to concurrent activity across ${pattern.scope}; convergence is established, causality is not.`,generatedAt:pattern.detectedAt,confidence:clamp(base),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["additional independent domains become active","shared entities, locations, or event chains connect the active domains","the convergence persists"],falsifiers:["domains return to baseline independently","no shared temporal or graph structure emerges"],evidence:evidence(pattern),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
+  {competitionGroup:group,hypothesisType:"independent_convergence",statement:`The concurrent activity across ${pattern.scope} may be coincidental or separately caused.`,generatedAt:pattern.detectedAt,confidence:clamp(.85-base),status:"active",supportScore:Math.max(.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["activity diverges by domain","no cross-domain event chains emerge"],falsifiers:["multiple domains continue moving together","shared event chains connect domains"],evidence:evidence(pattern,.4),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
+ ];
+ else if(pattern.patternType==="temporal_sequence_cluster")rows=[
+  {competitionGroup:group,hypothesisType:"structural_transition",statement:`The ordered event sequence in ${pattern.scope} may represent a real progression rather than unrelated alerts.`,generatedAt:pattern.detectedAt,confidence:clamp(base+.08),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["the sequence extends with another compatible event","later events preserve the same regional or semantic trajectory"],falsifiers:["the chain terminates with no continuation","subsequent events are spatially or semantically unrelated"],evidence:evidence(pattern),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
+  {competitionGroup:group,hypothesisType:"independent_convergence",statement:`The ordered sequence in ${pattern.scope} may be an artifact of alert timing rather than one coherent progression.`,generatedAt:pattern.detectedAt,confidence:clamp(.78-base),status:"active",supportScore:Math.max(.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["the sequence fails to extend","event types diverge without a stable regional path"],falsifiers:["the sequence persists across additional observations"],evidence:evidence(pattern,.35),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
+ ];
+ else if(pattern.patternType==="regional_recurrence_cluster")rows=[
+  {competitionGroup:group,hypothesisType:"structural_transition",statement:`Repeated events in ${pattern.scope} may indicate a persistent regional condition rather than isolated incidents.`,generatedAt:pattern.detectedAt,confidence:clamp(base+.06),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["another same-type event appears in the regional scope","recurrence survives across later observation cycles"],falsifiers:["the recurrence stops and the region returns to baseline"],evidence:evidence(pattern),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
+  {competitionGroup:group,hypothesisType:"independent_convergence",statement:`The repeated events in ${pattern.scope} may be separate incidents that only look like a persistent regional condition.`,generatedAt:pattern.detectedAt,confidence:clamp(.8-base),status:"active",supportScore:Math.max(.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["recurrence stops","new alerts shift elsewhere"],falsifiers:["same-region recurrence continues"],evidence:evidence(pattern,.35),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
+ ];
+ else rows=[
+  {competitionGroup:group,hypothesisType:"structural_transition",statement:"The current cluster of graph and regime-change signals may represent a genuine structural transition rather than transient noise.",generatedAt:pattern.detectedAt,confidence:clamp(base+.05),status:"active",supportScore:pattern.score,contradictionScore:0,expectedEvidence:["centrality or co-occurrence changes persist","relationships accumulate around the same entities"],falsifiers:["graph structure reverts","implicated relationships disappear"],evidence:evidence(pattern),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"},
+  {competitionGroup:group,hypothesisType:"independent_convergence",statement:"The apparent structural transition may be a short-lived combination of unrelated detector firings.",generatedAt:pattern.detectedAt,confidence:clamp(.8-base),status:"active",supportScore:Math.max(.1,1/(1+pattern.score)),contradictionScore:0,expectedEvidence:["detectors stop firing together"],falsifiers:["the same structural pattern persists"],evidence:evidence(pattern,.35),details:{patternType:pattern.patternType,scope:pattern.scope},modelVersion:"deterministic_hypothesis_v1"}
+ ];
+ rows.sort((a,b)=>b.confidence-a.confidence).forEach((row,index)=>out.push({...row,id:hid(group,row.hypothesisType),rank:index+1}));}return out;}
