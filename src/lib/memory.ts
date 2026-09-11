@@ -1,63 +1,20 @@
 import type { Observation, Signal } from "./types";
+import type { EntityCandidate } from "./entities";
 
-function config() {
-  const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("ARGUS persistent memory requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
-  return { url, key };
+function config() { const url = process.env.SUPABASE_URL?.replace(/\/$/, ""); const key = process.env.SUPABASE_SERVICE_ROLE_KEY; if (!url || !key) throw new Error("ARGUS persistent memory requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY"); return { url, key }; }
+async function request(path: string, init?: RequestInit) { const { url, key } = config(); const response = await fetch(`${url}/rest/v1/${path}`, { ...init, cache: "no-store", headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...init?.headers } }); const body = await response.text(); if (!response.ok) throw new Error(`ARGUS memory request failed (${response.status}): ${body.slice(0, 500)}`); if (!body.trim()) return null; try { return JSON.parse(body); } catch { throw new Error(`ARGUS memory returned invalid JSON (${response.status}): ${body.slice(0, 500)}`); } }
+
+export async function remember(items: Observation[]) { if (!items.length) return; await request("argus_observations?on_conflict=fingerprint", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(items.map(item => ({ fingerprint: item.fingerprint, id: item.id, source_id: item.sourceId, external_id: item.externalId, title: item.title, url: item.url, published_at: item.publishedAt, observed_at: item.observedAt, summary: item.summary }))) }); }
+export async function rememberSignal(signal: Signal) { await request("argus_signals?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ id: signal.id, kind: signal.kind, source_id: signal.sourceId, observed_at: signal.observedAt, score: signal.score, baseline: signal.baseline, current_value: signal.current, evidence_observation_ids: signal.evidenceObservationIds }) }); }
+
+export async function rememberEntities(observation: Observation, entities: EntityCandidate[]) {
+  if (!entities.length) return;
+  const seen = observation.observedAt;
+  await request("argus_entities?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(entities.map(e => ({ id: e.id, canonical_name: e.canonicalName, entity_type: e.entityType, normalized_name: e.normalizedName, first_seen_at: seen, last_seen_at: seen }))) });
+  await request("argus_entity_aliases?on_conflict=entity_id,normalized_alias", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(entities.map(e => ({ entity_id: e.id, alias: e.mentionText, normalized_alias: e.mentionText.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() }))) });
+  await request("argus_observation_entities?on_conflict=observation_id,entity_id,mention_text", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(entities.map(e => ({ observation_id: observation.id, entity_id: e.id, mention_text: e.mentionText, extraction_method: "deterministic_v1", confidence: e.confidence }))) });
 }
 
-async function request(path: string, init?: RequestInit) {
-  const { url, key } = config();
-  const response = await fetch(`${url}/rest/v1/${path}`, {
-    ...init,
-    cache: "no-store",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
-  const body = await response.text();
-  if (!response.ok) throw new Error(`ARGUS memory request failed (${response.status}): ${body.slice(0, 500)}`);
-  if (!body.trim()) return null;
-  try { return JSON.parse(body); }
-  catch { throw new Error(`ARGUS memory returned invalid JSON (${response.status}): ${body.slice(0, 500)}`); }
-}
-
-export async function remember(items: Observation[]) {
-  if (!items.length) return;
-  await request("argus_observations?on_conflict=fingerprint", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(items.map(item => ({
-      fingerprint: item.fingerprint, id: item.id, source_id: item.sourceId, external_id: item.externalId,
-      title: item.title, url: item.url, published_at: item.publishedAt, observed_at: item.observedAt, summary: item.summary,
-    }))),
-  });
-}
-
-export async function rememberSignal(signal: Signal) {
-  await request("argus_signals?on_conflict=id", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ id: signal.id, kind: signal.kind, source_id: signal.sourceId, observed_at: signal.observedAt,
-      score: signal.score, baseline: signal.baseline, current_value: signal.current,
-      evidence_observation_ids: signal.evidenceObservationIds }),
-  });
-}
-
-export async function getObservations(): Promise<Observation[]> {
-  const rows = (await request("argus_observations?select=id,source_id,external_id,title,url,published_at,observed_at,summary,fingerprint&order=published_at.desc&limit=5000") ?? []) as Array<Record<string, unknown>>;
-  return rows.map(row => ({ id: String(row.id), sourceId: String(row.source_id), externalId: String(row.external_id),
-    title: String(row.title), url: String(row.url), publishedAt: String(row.published_at), observedAt: String(row.observed_at),
-    summary: String(row.summary ?? ""), fingerprint: String(row.fingerprint) }));
-}
-
-export async function getSignals(): Promise<Signal[]> {
-  const rows = (await request("argus_signals?select=id,kind,source_id,observed_at,score,baseline,current_value,evidence_observation_ids&order=observed_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>;
-  return rows.map(row => ({ id: String(row.id), kind: "volume_spike", sourceId: String(row.source_id), observedAt: String(row.observed_at),
-    score: Number(row.score), baseline: Number(row.baseline), current: Number(row.current_value),
-    evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [] }));
-}
+export async function getEntityStats() { const entities = (await request("argus_entities?select=id") ?? []) as unknown[]; const links = (await request("argus_observation_entities?select=observation_id,entity_id") ?? []) as unknown[]; return { entities: entities.length, entityLinks: links.length }; }
+export async function getObservations(): Promise<Observation[]> { const rows = (await request("argus_observations?select=id,source_id,external_id,title,url,published_at,observed_at,summary,fingerprint&order=published_at.desc&limit=5000") ?? []) as Array<Record<string, unknown>>; return rows.map(row => ({ id: String(row.id), sourceId: String(row.source_id), externalId: String(row.external_id), title: String(row.title), url: String(row.url), publishedAt: String(row.published_at), observedAt: String(row.observed_at), summary: String(row.summary ?? ""), fingerprint: String(row.fingerprint) })); }
+export async function getSignals(): Promise<Signal[]> { const rows = (await request("argus_signals?select=id,kind,source_id,observed_at,score,baseline,current_value,evidence_observation_ids&order=observed_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>; return rows.map(row => ({ id: String(row.id), kind: "volume_spike", sourceId: String(row.source_id), observedAt: String(row.observed_at), score: Number(row.score), baseline: Number(row.baseline), current: Number(row.current_value), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [] })); }
