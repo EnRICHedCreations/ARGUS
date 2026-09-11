@@ -9,13 +9,16 @@ export async function GET() {
   const inference: Inference = { id: "i1", signalId: "s1", inferenceType: "novelty", subjectScope: "fixture", statement: "Fixture inference", inferredAt: "2026-01-01T00:02:00.000Z", confidence: 0.7, derivationMethod: "deterministic_signal_interpretation_v1", evidenceObservationIds: ["o1"], details: {} };
   const pattern = { id:"pt1", patternType:"cross_domain_convergence", detectedAt:"2026-01-01T00:02:00.000Z", scope:"fixture+other", score:2, statement:"Fixture pattern", evidenceSignalIds:["s1"], evidenceObservationIds:["o1"], details:{}, modelVersion:"deterministic_pattern_v1" };
   const hypothesis = { id:"h1", competitionGroup:"pattern:pt1", hypothesisType:"shared_external_driver", statement:"Fixture hypothesis", generatedAt:"2026-01-01T00:02:00.000Z", confidence:0.6, rank:1, status:"active", supportScore:2, contradictionScore:0, expectedEvidence:["fixture"], falsifiers:["fixture"], details:{}, modelVersion:"deterministic_hypothesis_v1" };
+  const hypothesisEvaluation={id:"he1",hypothesisId:"h1",evaluatedAt:"2026-01-01T00:05:00.000Z",priorConfidence:0.6,posteriorConfidence:0.7,status:"strengthened"};
+  const expectation={id:"ex1",hypothesisId:"h1",expectationType:"pattern_persistence",statement:"Fixture expectation",createdAt:"2026-01-01T00:05:00.000Z",resolvesAt:"2026-01-01T02:05:00.000Z",status:"open",expectedPolarity:"support",weight:0.1,details:{}};
+  const expectationOutcome={id:"exo1",expectationId:"ex1",resolvedAt:"2026-01-01T02:06:00.000Z",outcome:true,confidenceDelta:0.1};
   const prediction: Prediction = { id: "p1", predictionType: "source_activity_elevated", subjectScope: "fixture", statement: "Fixture prediction", predictedAt: "2026-01-01T00:03:00.000Z", horizonHours: 1, resolvesAt: "2026-01-01T01:03:00.000Z", probability: 0.7, status: "resolved", modelVersion: "deterministic_oracle_v1", evidenceSignalIds: ["s1"], evidenceObservationIds: ["o1"], details: { threshold: 1 } };
   const outcome: Outcome = { id: "r1", predictionId: "p1", resolvedAt: "2026-01-01T01:04:00.000Z", outcome: true, actualValue: 1, targetValue: 1, brierScore: 0.09, absoluteError: 0, resolutionMethod: "deterministic_source_activity_v1", evidenceObservationIds: ["o1"], details: {} };
-  const memory = { observations:[observation], signals:[signal], inferences:[inference], patterns:[pattern], hypotheses:[hypothesis], predictions:[prediction], outcomes:[outcome] };
-  const kinds = ["summary","observations","signals","inferences","patterns","hypotheses","predictions","outcomes"] as const;
-  const results = kinds.map(kind => ({ kind, result: runStructuredQuery({ kind, source: kind === "outcomes" || kind === "hypotheses" ? undefined : "fixture", limit: 5 }, memory) }));
+  const memory = { observations:[observation], signals:[signal], inferences:[inference], patterns:[pattern], hypotheses:[hypothesis], hypothesisEvaluations:[hypothesisEvaluation], expectations:[expectation], expectationOutcomes:[expectationOutcome], predictions:[prediction], outcomes:[outcome] };
+  const kinds = ["summary","observations","signals","inferences","patterns","hypotheses","hypothesis_evaluations","expectations","expectation_outcomes","predictions","outcomes"] as const;
+  const results = kinds.map(kind => ({ kind, result: runStructuredQuery({ kind, source: ["outcomes","hypotheses","hypothesis_evaluations","expectations","expectation_outcomes"].includes(kind) ? undefined : "fixture", limit: 5 }, memory) }));
   const classifications = results.map(row => (row.result as { classification?: string }).classification).filter(Boolean);
-  const expected = ["memory_summary","observed_fact","signal","inference","pattern","hypothesis","prediction","outcome"];
+  const expected = ["memory_summary","observed_fact","signal","inference","pattern","hypothesis","hypothesis_evaluation","expectation","expectation_outcome","prediction","outcome"];
   const pass = expected.every(value => classifications.includes(value));
-  return NextResponse.json({ certification:"structured_query_runtime_v2", sideEffects:"none", llmProvider:"none", expectedClassifications:expected, observedClassifications:classifications, pass });
+  return NextResponse.json({ certification:"structured_query_runtime_v3", sideEffects:"none", llmProvider:"none", expectedClassifications:expected, observedClassifications:classifications, pass });
 }
