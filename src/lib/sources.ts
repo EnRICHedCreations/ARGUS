@@ -17,6 +17,6 @@ export const sources: Source[] = [
   // Economics / monetary-policy information environment.
   { id: "fed-press", name: "Federal Reserve Press Releases", url: "https://www.federalreserve.gov/feeds/press_all.xml", kind: "rss", enabled: true },
 
-  // Science / research activity, independent from NASA.
-  { id: "noaa-news", name: "NOAA News", url: "https://www.noaa.gov/news/feed", kind: "rss", enabled: true }
+  // Science / environmental activity, independent from NASA.
+  { id: "noaa-news", name: "NOAA National Ocean Service News", url: "https://oceanservice.noaa.gov/rss/nosnews.xml", kind: "rss", enabled: true }
 ];
