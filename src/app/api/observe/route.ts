@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { collect } from "@/lib/collector";
 import { detectVolumeSpike } from "@/lib/anomaly";
+import { runAnalyst } from "@/lib/analyst";
 import { extractEntities } from "@/lib/entities";
 import { deriveRelationships } from "@/lib/relationships";
-import { getEntityStats, getGraphStats, getObservations, getSignals, remember, rememberEntityGraph, rememberSignals } from "@/lib/memory";
+import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getSignals, remember, rememberEntityGraph, rememberSignals } from "@/lib/memory";
 import { sources } from "@/lib/sources";
 
 export async function POST() {
@@ -32,10 +33,15 @@ export async function POST() {
     catch (error) { errors.push(`graph:batch: ${String(error)}`); }
 
     const all = await getObservations();
-    const signals = sources
+    const legacySignals = sources
       .map(source => detectVolumeSpike(source.id, all))
       .filter((signal): signal is NonNullable<typeof signal> => signal != null);
 
+    let analystSignals = [] as ReturnType<typeof runAnalyst>;
+    try { analystSignals = runAnalyst(all, await getAnalystEvidence()); }
+    catch (error) { errors.push(`analyst: ${String(error)}`); }
+
+    const signals = [...legacySignals, ...analystSignals];
     try { await rememberSignals(signals); }
     catch (error) { errors.push(`signals:batch: ${String(error)}`); }
 
@@ -46,27 +52,30 @@ export async function POST() {
       memory: "persistent",
       entities: await getEntityStats(),
       graph: await getGraphStats(),
+      analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] },
       persistence: "batched",
-      gate: 3,
+      gate: 4,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 3 }, { status: 500 });
+    return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 4 }, { status: 500 });
   }
 }
 
 export async function GET() {
   try {
+    const signals = await getSignals();
     return NextResponse.json({
       sources,
       observations: (await getObservations()).slice(0, 100),
-      signals: await getSignals(),
+      signals,
       entities: await getEntityStats(),
       graph: await getGraphStats(),
+      analyst: { detectorCount: 8, persistedSignalKinds: [...new Set(signals.map(signal => signal.kind))] },
       memory: "persistent",
       persistence: "batched",
-      gate: 3,
+      gate: 4,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 3 }, { status: 500 });
+    return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 4 }, { status: 500 });
   }
 }
