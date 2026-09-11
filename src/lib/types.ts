@@ -34,7 +34,7 @@ export type Signal = {
 
 export type Prediction = {
   id: string;
-  predictionType: "source_activity_elevated";
+  predictionType: "source_activity_elevated" | "cross_domain_follow_through";
   subjectScope: string;
   statement: string;
   predictedAt: string;
@@ -42,7 +42,7 @@ export type Prediction = {
   resolvesAt: string;
   probability: number;
   status: "open" | "resolved" | "expired";
-  modelVersion: "deterministic_oracle_v1";
+  modelVersion: "deterministic_oracle_v1" | "deterministic_oracle_v2";
   evidenceSignalIds: string[];
   evidenceObservationIds: string[];
   details: Record<string, unknown>;
@@ -57,7 +57,7 @@ export type Outcome = {
   targetValue: number;
   brierScore: number;
   absoluteError: number;
-  resolutionMethod: "deterministic_source_activity_v1";
+  resolutionMethod: "deterministic_source_activity_v1" | "deterministic_cross_domain_v1";
   evidenceObservationIds: string[];
   details: Record<string, unknown>;
 };
@@ -66,6 +66,6 @@ export type Source = {
   id: string;
   name: string;
   url: string;
-  kind: "rss" | "atom" | "nws_alerts_json";
+  kind: "rss" | "atom" | "nws_alerts_json" | "hackernews_json";
   enabled: boolean;
 };
