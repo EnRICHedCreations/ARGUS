@@ -66,6 +66,6 @@ export type Source = {
   id: string;
   name: string;
   url: string;
-  kind: "rss" | "atom";
+  kind: "rss" | "atom" | "nws_alerts_json";
   enabled: boolean;
 };
