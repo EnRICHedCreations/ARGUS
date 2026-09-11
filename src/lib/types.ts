@@ -10,15 +10,26 @@ export type Observation = {
   fingerprint: string;
 };
 
+export type SignalKind =
+  | "volume_spike"
+  | "z_score"
+  | "acceleration"
+  | "novelty"
+  | "co_occurrence"
+  | "centrality_shift"
+  | "change_point"
+  | "cross_source_correlation";
+
 export type Signal = {
   id: string;
-  kind: "volume_spike";
+  kind: SignalKind;
   sourceId: string;
   observedAt: string;
   score: number;
   baseline: number;
   current: number;
   evidenceObservationIds: string[];
+  details?: Record<string, unknown>;
 };
 
 export type Source = {
