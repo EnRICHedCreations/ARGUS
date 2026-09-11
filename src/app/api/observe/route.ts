@@ -23,10 +23,11 @@ export async function POST() {
     const items = collected.flatMap(result => result.items);
     try { await remember(items); } catch (error) { errors.push(`memory:batch: ${String(error)}`); }
 
-    const events = items.flatMap(deriveEvents);
+    const eventsByObservation = new Map(items.map(observation => [observation.id, deriveEvents(observation)]));
+    const events = [...eventsByObservation.values()].flat();
     try { await rememberEvents(events); } catch (error) { errors.push(`events:batch: ${String(error)}`); }
 
-    const graphEntries = items.map(observation => { const entities = extractEntities(observation); return { observation, entities, relationships: deriveRelationships(observation, entities) }; });
+    const graphEntries = items.map(observation => { const entities = extractEntities(observation); return { observation, entities, relationships: deriveRelationships(observation, entities, eventsByObservation.get(observation.id) ?? []) }; });
     try { await rememberEntityGraphV2(graphEntries); } catch (error) { errors.push(`graph:batch: ${String(error)}`); }
 
     const all = await getObservations();
@@ -47,13 +48,11 @@ export async function POST() {
     persistedPredictions = await getPredictions();
     const outcomes = await getOutcomes();
     const persistedInferences = await getInferences();
-    return NextResponse.json({ observations: all.length, events: await getEventStats(), signals: await getSignals(), inferences: persistedInferences, predictions: persistedPredictions, outcomes, calibration: calibrationSummary(persistedPredictions, outcomes), errors, memory: "persistent", entities: await getEntityStats(), graph: await getGraphStats(), analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { generatedThisRun: inferences.length, persisted: persistedInferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedThisRun: dueOutcomes.length, modelVersion: "deterministic_source_activity_v1" }, persistence: "batched", gate: 8 });
-  } catch (error) { return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 8 }, { status: 500 }); }
+    return NextResponse.json({ observations: all.length, events: await getEventStats(), signals: await getSignals(), inferences: persistedInferences, predictions: persistedPredictions, outcomes, calibration: calibrationSummary(persistedPredictions, outcomes), errors, memory: "persistent", entities: await getEntityStats(), graph: await getGraphStats(), analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { generatedThisRun: inferences.length, persisted: persistedInferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedThisRun: dueOutcomes.length, modelVersion: "deterministic_source_activity_v1" }, persistence: "batched", gate: 9 });
+  } catch (error) { return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", gate: 9 }, { status: 500 }); }
 }
 
 export async function GET() {
-  try {
-    const signals = await getSignals(); const predictions = await getPredictions(); const outcomes = await getOutcomes(); const inferences = await getInferences();
-    return NextResponse.json({ sources, observations: (await getObservations()).slice(0, 100), events: await getEventStats(), signals, inferences, predictions, outcomes, calibration: calibrationSummary(predictions, outcomes), entities: await getEntityStats(), graph: await getGraphStats(), analyst: { detectorCount: 8, persistedSignalKinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { persisted: inferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { openPredictions: predictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedPredictions: outcomes.length, modelVersion: "deterministic_source_activity_v1" }, memory: "persistent", persistence: "batched", gate: 8 });
-  } catch (error) { return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 8 }, { status: 500 }); }
+  try { const signals = await getSignals(); const predictions = await getPredictions(); const outcomes = await getOutcomes(); const inferences = await getInferences(); return NextResponse.json({ sources, observations: (await getObservations()).slice(0, 100), events: await getEventStats(), signals, inferences, predictions, outcomes, calibration: calibrationSummary(predictions, outcomes), entities: await getEntityStats(), graph: await getGraphStats(), analyst: { detectorCount: 8, persistedSignalKinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { persisted: inferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { openPredictions: predictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedPredictions: outcomes.length, modelVersion: "deterministic_source_activity_v1" }, memory: "persistent", persistence: "batched", gate: 9 }); }
+  catch (error) { return NextResponse.json({ error: String(error), memory: "persistent", persistence: "batched", gate: 9 }, { status: 500 }); }
 }
