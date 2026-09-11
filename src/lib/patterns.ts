@@ -3,7 +3,7 @@ import type { Signal } from "./types";
 
 export type ArgusPattern = {
   id: string;
-  patternType: "cross_domain_convergence" | "structural_shift_cluster";
+  patternType: "cross_domain_convergence" | "structural_shift_cluster" | "temporal_sequence_cluster" | "regional_recurrence_cluster";
   detectedAt: string;
   scope: string;
   score: number;
@@ -11,7 +11,7 @@ export type ArgusPattern = {
   evidenceSignalIds: string[];
   evidenceObservationIds: string[];
   details: Record<string, unknown>;
-  modelVersion: "deterministic_pattern_v1";
+  modelVersion: "deterministic_pattern_v1" | "deterministic_temporal_pattern_v1";
 };
 
 const domainFor = (sourceId: string) => {
