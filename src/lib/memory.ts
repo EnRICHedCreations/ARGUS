@@ -1,4 +1,4 @@
-import type { Observation, Prediction, Signal } from "./types";
+import type { Observation, Outcome, Prediction, Signal } from "./types";
 import type { EntityCandidate } from "./entities";
 import type { TemporalRelationship } from "./relationships";
 import type { AnalystEvidence } from "./analyst";
@@ -54,32 +54,30 @@ export async function rememberPredictions(predictions: Prediction[]) {
   await request("argus_predictions?on_conflict=id", {
     method: "POST",
     headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
-    body: JSON.stringify(predictions.map(prediction => ({
-      id: prediction.id,
-      prediction_type: prediction.predictionType,
-      subject_scope: prediction.subjectScope,
-      statement: prediction.statement,
-      predicted_at: prediction.predictedAt,
-      horizon_hours: prediction.horizonHours,
-      resolves_at: prediction.resolvesAt,
-      probability: prediction.probability,
-      status: prediction.status,
-      model_version: prediction.modelVersion,
-      evidence_signal_ids: prediction.evidenceSignalIds,
-      evidence_observation_ids: prediction.evidenceObservationIds,
-      details: prediction.details,
-    }))),
+    body: JSON.stringify(predictions.map(prediction => ({ id: prediction.id, prediction_type: prediction.predictionType, subject_scope: prediction.subjectScope, statement: prediction.statement, predicted_at: prediction.predictedAt, horizon_hours: prediction.horizonHours, resolves_at: prediction.resolvesAt, probability: prediction.probability, status: prediction.status, model_version: prediction.modelVersion, evidence_signal_ids: prediction.evidenceSignalIds, evidence_observation_ids: prediction.evidenceObservationIds, details: prediction.details }))),
   });
 
   const evidence = predictions.flatMap(prediction => [
     ...prediction.evidenceSignalIds.map(evidenceId => ({ prediction_id: prediction.id, evidence_type: "signal", evidence_id: evidenceId })),
     ...prediction.evidenceObservationIds.map(evidenceId => ({ prediction_id: prediction.id, evidence_type: "observation", evidence_id: evidenceId })),
   ]);
-  if (evidence.length) await request("argus_prediction_evidence?on_conflict=prediction_id,evidence_type,evidence_id", {
+  if (evidence.length) await request("argus_prediction_evidence?on_conflict=prediction_id,evidence_type,evidence_id", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(evidence) });
+}
+
+export async function rememberOutcomes(outcomes: Outcome[]) {
+  if (!outcomes.length) return;
+  await request("argus_outcomes?on_conflict=prediction_id", {
     method: "POST",
     headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
-    body: JSON.stringify(evidence),
+    body: JSON.stringify(outcomes.map(outcome => ({ id: outcome.id, prediction_id: outcome.predictionId, resolved_at: outcome.resolvedAt, outcome: outcome.outcome, actual_value: outcome.actualValue, target_value: outcome.targetValue, brier_score: outcome.brierScore, absolute_error: outcome.absoluteError, resolution_method: outcome.resolutionMethod, evidence_observation_ids: outcome.evidenceObservationIds, details: outcome.details }))),
   });
+  for (const outcome of outcomes) {
+    await request(`argus_predictions?id=eq.${encodeURIComponent(outcome.predictionId)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+  }
 }
 
 export async function rememberEntityGraph(entries: Array<{ observation: Observation; entities: EntityCandidate[]; relationships: TemporalRelationship[] }>) {
@@ -88,7 +86,6 @@ export async function rememberEntityGraph(entries: Array<{ observation: Observat
   const observationEntityRows = new Map<string, Record<string, unknown>>();
   const relationshipRows = new Map<string, Record<string, unknown>>();
   const relationshipEvidenceRows = new Map<string, Record<string, unknown>>();
-
   for (const { observation, entities, relationships } of entries) {
     for (const entity of entities) {
       entityRows.set(entity.id, { id: entity.id, canonical_name: entity.canonicalName, entity_type: entity.entityType, normalized_name: entity.normalizedName, first_seen_at: observation.observedAt, last_seen_at: observation.observedAt });
@@ -101,7 +98,6 @@ export async function rememberEntityGraph(entries: Array<{ observation: Observat
       for (const observationId of relationship.evidenceObservationIds) relationshipEvidenceRows.set(`${relationship.id}:${observationId}`, { relationship_id: relationship.id, observation_id: observationId, observed_at: relationship.observedAt });
     }
   }
-
   if (entityRows.size) await request("argus_entities?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify([...entityRows.values()]) });
   if (aliasRows.size) await request("argus_entity_aliases?on_conflict=entity_id,normalized_alias", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify([...aliasRows.values()]) });
   if (observationEntityRows.size) await request("argus_observation_entities?on_conflict=observation_id,entity_id,mention_text", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify([...observationEntityRows.values()]) });
@@ -112,49 +108,20 @@ export async function rememberEntityGraph(entries: Array<{ observation: Observat
 export async function getAnalystEvidence(): Promise<AnalystEvidence> {
   const entityRows = (await request("argus_observation_entities?select=observation_id,entity_id&limit=5000") ?? []) as Array<Record<string, unknown>>;
   const relationshipRows = (await request("argus_relationships?select=id,subject_entity_id,object_entity_id,object_event_id,relationship_type,valid_from,evidence_observation_ids&order=valid_from.desc&limit=5000") ?? []) as Array<Record<string, unknown>>;
-  return {
-    entityLinks: entityRows.map(row => ({ observationId: String(row.observation_id), entityId: String(row.entity_id) })),
-    relationships: relationshipRows.map(row => ({ id: String(row.id), subjectEntityId: String(row.subject_entity_id), objectEntityId: row.object_entity_id == null ? undefined : String(row.object_entity_id), objectEventId: row.object_event_id == null ? undefined : String(row.object_event_id), relationshipType: String(row.relationship_type), validFrom: String(row.valid_from), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [] })),
-  };
+  return { entityLinks: entityRows.map(row => ({ observationId: String(row.observation_id), entityId: String(row.entity_id) })), relationships: relationshipRows.map(row => ({ id: String(row.id), subjectEntityId: String(row.subject_entity_id), objectEntityId: row.object_entity_id == null ? undefined : String(row.object_entity_id), objectEventId: row.object_event_id == null ? undefined : String(row.object_event_id), relationshipType: String(row.relationship_type), validFrom: String(row.valid_from), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [] })) };
 }
 
 export async function getPredictions(): Promise<Prediction[]> {
   const rows = (await request("argus_predictions?select=id,prediction_type,subject_scope,statement,predicted_at,horizon_hours,resolves_at,probability,status,model_version,evidence_signal_ids,evidence_observation_ids,details&order=predicted_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>;
-  return rows.map(row => ({
-    id: String(row.id),
-    predictionType: "source_activity_elevated",
-    subjectScope: String(row.subject_scope),
-    statement: String(row.statement),
-    predictedAt: String(row.predicted_at),
-    horizonHours: Number(row.horizon_hours),
-    resolvesAt: String(row.resolves_at),
-    probability: Number(row.probability),
-    status: String(row.status) as Prediction["status"],
-    modelVersion: "deterministic_oracle_v1",
-    evidenceSignalIds: Array.isArray(row.evidence_signal_ids) ? row.evidence_signal_ids.map(String) : [],
-    evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [],
-    details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {},
-  }));
+  return rows.map(row => ({ id: String(row.id), predictionType: "source_activity_elevated", subjectScope: String(row.subject_scope), statement: String(row.statement), predictedAt: String(row.predicted_at), horizonHours: Number(row.horizon_hours), resolvesAt: String(row.resolves_at), probability: Number(row.probability), status: String(row.status) as Prediction["status"], modelVersion: "deterministic_oracle_v1", evidenceSignalIds: Array.isArray(row.evidence_signal_ids) ? row.evidence_signal_ids.map(String) : [], evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [], details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {} }));
 }
 
-export async function getGraphStats() {
-  const relationships = (await request("argus_relationships?select=id,relationship_type,object_entity_id,object_event_id") ?? []) as Array<Record<string, unknown>>;
-  const evidence = (await request("argus_relationship_evidence?select=relationship_id,observation_id") ?? []) as unknown[];
-  return { relationships: relationships.length, relationshipEvidence: evidence.length, entityEventRelationships: relationships.filter(r => r.object_event_id != null).length, entityEntityRelationships: relationships.filter(r => r.object_entity_id != null).length };
+export async function getOutcomes(): Promise<Outcome[]> {
+  const rows = (await request("argus_outcomes?select=id,prediction_id,resolved_at,outcome,actual_value,target_value,brier_score,absolute_error,resolution_method,evidence_observation_ids,details&order=resolved_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>;
+  return rows.map(row => ({ id: String(row.id), predictionId: String(row.prediction_id), resolvedAt: String(row.resolved_at), outcome: Boolean(row.outcome), actualValue: Number(row.actual_value), targetValue: Number(row.target_value), brierScore: Number(row.brier_score), absoluteError: Number(row.absolute_error), resolutionMethod: "deterministic_source_activity_v1", evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [], details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {} }));
 }
 
-export async function getEntityStats() {
-  const entities = (await request("argus_entities?select=id") ?? []) as unknown[];
-  const links = (await request("argus_observation_entities?select=observation_id,entity_id") ?? []) as unknown[];
-  return { entities: entities.length, entityLinks: links.length };
-}
-
-export async function getObservations(): Promise<Observation[]> {
-  const rows = (await request("argus_observations?select=id,source_id,external_id,title,url,published_at,observed_at,summary,fingerprint&order=published_at.desc&limit=5000") ?? []) as Array<Record<string, unknown>>;
-  return rows.map(row => ({ id: String(row.id), sourceId: String(row.source_id), externalId: String(row.external_id), title: String(row.title), url: String(row.url), publishedAt: String(row.published_at), observedAt: String(row.observed_at), summary: String(row.summary ?? ""), fingerprint: String(row.fingerprint) }));
-}
-
-export async function getSignals(): Promise<Signal[]> {
-  const rows = (await request("argus_signals?select=id,kind,source_id,observed_at,score,baseline,current_value,evidence_observation_ids,details&order=observed_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>;
-  return rows.map(row => ({ id: String(row.id), kind: String(row.kind) as Signal["kind"], sourceId: String(row.source_id), observedAt: String(row.observed_at), score: Number(row.score), baseline: Number(row.baseline), current: Number(row.current_value), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [], details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {} }));
-}
+export async function getGraphStats() { const relationships = (await request("argus_relationships?select=id,relationship_type,object_entity_id,object_event_id") ?? []) as Array<Record<string, unknown>>; const evidence = (await request("argus_relationship_evidence?select=relationship_id,observation_id") ?? []) as unknown[]; return { relationships: relationships.length, relationshipEvidence: evidence.length, entityEventRelationships: relationships.filter(r => r.object_event_id != null).length, entityEntityRelationships: relationships.filter(r => r.object_entity_id != null).length }; }
+export async function getEntityStats() { const entities = (await request("argus_entities?select=id") ?? []) as unknown[]; const links = (await request("argus_observation_entities?select=observation_id,entity_id") ?? []) as unknown[]; return { entities: entities.length, entityLinks: links.length }; }
+export async function getObservations(): Promise<Observation[]> { const rows = (await request("argus_observations?select=id,source_id,external_id,title,url,published_at,observed_at,summary,fingerprint&order=published_at.desc&limit=5000") ?? []) as Array<Record<string, unknown>>; return rows.map(row => ({ id: String(row.id), sourceId: String(row.source_id), externalId: String(row.external_id), title: String(row.title), url: String(row.url), publishedAt: String(row.published_at), observedAt: String(row.observed_at), summary: String(row.summary ?? ""), fingerprint: String(row.fingerprint) })); }
+export async function getSignals(): Promise<Signal[]> { const rows = (await request("argus_signals?select=id,kind,source_id,observed_at,score,baseline,current_value,evidence_observation_ids,details&order=observed_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>; return rows.map(row => ({ id: String(row.id), kind: String(row.kind) as Signal["kind"], sourceId: String(row.source_id), observedAt: String(row.observed_at), score: Number(row.score), baseline: Number(row.baseline), current: Number(row.current_value), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [], details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {} })); }
