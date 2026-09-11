@@ -5,7 +5,9 @@ import { runAnalyst } from "@/lib/analyst";
 import { calibrationSummary, resolveDuePredictions } from "@/lib/calibration";
 import { extractEntities } from "@/lib/entities";
 import { deriveEvents } from "@/lib/events";
-import { getEventStats, rememberEvents } from "@/lib/event-memory";
+import { getEventStats, getRecentEvents, rememberEvents } from "@/lib/event-memory";
+import { getEventLinks, getEventLinkStats } from "@/lib/event-chain-memory";
+import { deriveTemporalPatterns } from "@/lib/temporal-patterns";
 import { deriveInferences } from "@/lib/inference";
 import { getInferences, rememberInferences } from "@/lib/inference-store";
 import { generatePredictions } from "@/lib/oracle";
@@ -20,69 +22,14 @@ import { getHypotheses, getHypothesisEvaluations, getPatterns, rememberHypothese
 import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getOutcomes, getPredictions, getSignals, remember, rememberOutcomes, rememberPredictions, rememberSignals } from "@/lib/memory";
 import { sources } from "@/lib/sources";
 
-export async function POST() {
-  const errors: string[] = [];
-  try {
-    const results = await Promise.allSettled(sources.filter(source => source.enabled).map(async source => ({ source, items: await collect(source) })));
-    const collected = [] as Array<{ source: (typeof sources)[number]; items: Awaited<ReturnType<typeof collect>> }>;
-    for (const result of results) result.status === "rejected" ? errors.push(`collector: ${String(result.reason)}`) : collected.push(result.value);
-    const items = collected.flatMap(result => result.items);
-    try { await remember(items); } catch (error) { errors.push(`memory:batch: ${String(error)}`); }
-    const eventsByObservation = new Map(items.map(observation => [observation.id, deriveEvents(observation)]));
-    const events = [...eventsByObservation.values()].flat();
-    try { await rememberEvents(events); } catch (error) { errors.push(`events:batch: ${String(error)}`); }
-    const graphEntries = items.map(observation => { const entities = extractEntities(observation); return { observation, entities, relationships: deriveRelationships(observation, entities, eventsByObservation.get(observation.id) ?? []) }; });
-    try { await rememberEntityGraphV2(graphEntries); } catch (error) { errors.push(`graph:batch: ${String(error)}`); }
+export async function POST(){const errors:string[]=[];try{
+ const results=await Promise.allSettled(sources.filter(s=>s.enabled).map(async source=>({source,items:await collect(source)})));const collected=[] as Array<{source:(typeof sources)[number];items:Awaited<ReturnType<typeof collect>>}>;for(const result of results)result.status==="rejected"?errors.push(`collector: ${String(result.reason)}`):collected.push(result.value);const items=collected.flatMap(r=>r.items);
+ try{await remember(items);}catch(e){errors.push(`memory:batch: ${String(e)}`);}const eventsByObservation=new Map(items.map(o=>[o.id,deriveEvents(o)]));const events=[...eventsByObservation.values()].flat();try{await rememberEvents(events);}catch(e){errors.push(`events:batch: ${String(e)}`);}const graphEntries=items.map(observation=>{const entities=extractEntities(observation);return{observation,entities,relationships:deriveRelationships(observation,entities,eventsByObservation.get(observation.id)??[])}});try{await rememberEntityGraphV2(graphEntries);}catch(e){errors.push(`graph:batch: ${String(e)}`);}
+ const all=await getObservations();const legacySignals=sources.map(source=>detectVolumeSpike(source.id,all)).filter((s):s is NonNullable<typeof s>=>s!=null);let analystSignals=[] as ReturnType<typeof runAnalyst>;try{analystSignals=runAnalyst(all,await getAnalystEvidence());}catch(e){errors.push(`analyst: ${String(e)}`);}const signals=[...legacySignals,...analystSignals];try{await rememberSignals(signals);}catch(e){errors.push(`signals:batch: ${String(e)}`);}const inferences=deriveInferences(signals);try{await rememberInferences(inferences);}catch(e){errors.push(`inferences:batch: ${String(e)}`);}
+ const historicalPatterns=await getPatterns();const persistedBefore=await getHypotheses();const existingExpectations=await getExpectations();const nowIso=new Date().toISOString();const expectationOutcomes=resolveExpectations(existingExpectations,historicalPatterns,signals,nowIso);if(expectationOutcomes.length)try{await rememberExpectationOutcomes(expectationOutcomes);await rememberHypotheses(applyExpectationOutcomes(persistedBefore,existingExpectations,expectationOutcomes));}catch(e){errors.push(`expectations:resolve: ${String(e)}`);}
+ const recentEvents=await getRecentEvents(500);const eventLinks=await getEventLinks(2000);const temporalPatterns=deriveTemporalPatterns(recentEvents,eventLinks);const patterns=[...derivePatterns(signals),...temporalPatterns];const rawHypotheses=deriveHypotheses(patterns);const evaluated=evaluateHypotheses(rawHypotheses,patterns,historicalPatterns,signals);try{await rememberPatterns(patterns);}catch(e){errors.push(`patterns:batch: ${String(e)}`);}try{await rememberHypotheses(evaluated.hypotheses);await rememberHypothesisEvaluations(evaluated.evaluations);}catch(e){errors.push(`hypotheses:evaluation: ${String(e)}`);}const newExpectations=deriveExpectations(evaluated.hypotheses);try{await rememberExpectations(newExpectations);}catch(e){errors.push(`expectations:create: ${String(e)}`);}
+ const predictions=generatePredictions(signals);try{await rememberPredictions(predictions);}catch(e){errors.push(`predictions:batch: ${String(e)}`);}let persistedPredictions=await getPredictions();const existingOutcomes=await getOutcomes();const alreadyResolved=new Set(existingOutcomes.map(o=>o.predictionId));const dueOutcomes=resolveDuePredictions(persistedPredictions.filter(p=>!alreadyResolved.has(p.id)),all);try{await rememberOutcomes(dueOutcomes);}catch(e){errors.push(`outcomes:batch: ${String(e)}`);}persistedPredictions=await getPredictions();const outcomes=await getOutcomes();const persistedInferences=await getInferences();const persistedPatterns=await getPatterns();const persistedHypotheses=await getHypotheses();const hypothesisEvaluations=await getHypothesisEvaluations();const expectations=await getExpectations();const expectationHistory=await getExpectationOutcomes();
+ return NextResponse.json({observations:all.length,events:await getEventStats(),eventChains:await getEventLinkStats(),patterns:persistedPatterns,hypotheses:persistedHypotheses,hypothesisEvaluations,expectations,expectationOutcomes:expectationHistory,signals:await getSignals(),inferences:persistedInferences,predictions:persistedPredictions,outcomes,calibration:calibrationSummary(persistedPredictions,outcomes),errors,memory:"persistent",entities:await getEntityStats(),graph:await getGraphStats(),reasoning:{patternsGeneratedThisRun:patterns.length,temporalPatternsGeneratedThisRun:temporalPatterns.length,hypothesesGeneratedThisRun:evaluated.hypotheses.length,evaluationsThisRun:evaluated.evaluations.length,expectationsCreatedThisRun:newExpectations.length,expectationsResolvedThisRun:expectationOutcomes.length},persistence:"batched",llmProvider:"none",gate:13});
+}catch(error){return NextResponse.json({error:String(error),errors,memory:"persistent",persistence:"batched",llmProvider:"none",gate:13},{status:500});}}
 
-    const all = await getObservations();
-    const legacySignals = sources.map(source => detectVolumeSpike(source.id, all)).filter((signal): signal is NonNullable<typeof signal> => signal != null);
-    let analystSignals = [] as ReturnType<typeof runAnalyst>;
-    try { analystSignals = runAnalyst(all, await getAnalystEvidence()); } catch (error) { errors.push(`analyst: ${String(error)}`); }
-    const signals = [...legacySignals, ...analystSignals];
-    try { await rememberSignals(signals); } catch (error) { errors.push(`signals:batch: ${String(error)}`); }
-    const inferences = deriveInferences(signals);
-    try { await rememberInferences(inferences); } catch (error) { errors.push(`inferences:batch: ${String(error)}`); }
-
-    const historicalPatterns = await getPatterns();
-    const persistedBefore = await getHypotheses();
-    const existingExpectations = await getExpectations();
-    const nowIso = new Date().toISOString();
-    const expectationOutcomes = resolveExpectations(existingExpectations, historicalPatterns, signals, nowIso);
-    if (expectationOutcomes.length) {
-      try {
-        await rememberExpectationOutcomes(expectationOutcomes);
-        await rememberHypotheses(applyExpectationOutcomes(persistedBefore, existingExpectations, expectationOutcomes));
-      } catch (error) { errors.push(`expectations:resolve: ${String(error)}`); }
-    }
-
-    const patterns = derivePatterns(signals);
-    const rawHypotheses = deriveHypotheses(patterns);
-    const evaluated = evaluateHypotheses(rawHypotheses, patterns, historicalPatterns, signals);
-    try { await rememberPatterns(patterns); } catch (error) { errors.push(`patterns:batch: ${String(error)}`); }
-    try { await rememberHypotheses(evaluated.hypotheses); await rememberHypothesisEvaluations(evaluated.evaluations); } catch (error) { errors.push(`hypotheses:evaluation: ${String(error)}`); }
-    const newExpectations = deriveExpectations(evaluated.hypotheses);
-    try { await rememberExpectations(newExpectations); } catch (error) { errors.push(`expectations:create: ${String(error)}`); }
-
-    const predictions = generatePredictions(signals);
-    try { await rememberPredictions(predictions); } catch (error) { errors.push(`predictions:batch: ${String(error)}`); }
-    let persistedPredictions = await getPredictions();
-    const existingOutcomes = await getOutcomes();
-    const alreadyResolved = new Set(existingOutcomes.map(outcome => outcome.predictionId));
-    const dueOutcomes = resolveDuePredictions(persistedPredictions.filter(prediction => !alreadyResolved.has(prediction.id)), all);
-    try { await rememberOutcomes(dueOutcomes); } catch (error) { errors.push(`outcomes:batch: ${String(error)}`); }
-    persistedPredictions = await getPredictions();
-    const outcomes = await getOutcomes();
-    const persistedInferences = await getInferences();
-    const persistedPatterns = await getPatterns();
-    const persistedHypotheses = await getHypotheses();
-    const hypothesisEvaluations = await getHypothesisEvaluations();
-    const expectations = await getExpectations();
-    const expectationHistory = await getExpectationOutcomes();
-    return NextResponse.json({ observations: all.length, events: await getEventStats(), patterns: persistedPatterns, hypotheses: persistedHypotheses, hypothesisEvaluations, expectations, expectationOutcomes: expectationHistory, signals: await getSignals(), inferences: persistedInferences, predictions: persistedPredictions, outcomes, calibration: calibrationSummary(persistedPredictions, outcomes), errors, memory: "persistent", entities: await getEntityStats(), graph: await getGraphStats(), reasoning:{patternsGeneratedThisRun:patterns.length,hypothesesGeneratedThisRun:evaluated.hypotheses.length,evaluationsThisRun:evaluated.evaluations.length,contradictionsThisRun:evaluated.evaluations.reduce((n,e)=>n+e.contradictingEvidence.length,0),expectationsCreatedThisRun:newExpectations.length,expectationsResolvedThisRun:expectationOutcomes.length,modelVersions:["deterministic_pattern_v1","deterministic_hypothesis_v1","deterministic_hypothesis_evaluator_v1","deterministic_expectation_resolver_v1"]}, analyst: { detectorCount: 8, generatedThisRun: signals.length, kinds: [...new Set(signals.map(signal => signal.kind))] }, inference: { generatedThisRun: inferences.length, persisted: persistedInferences.length, modelVersion: "deterministic_signal_interpretation_v1" }, oracle: { generatedThisRun: predictions.length, openPredictions: persistedPredictions.filter(prediction => prediction.status === "open").length, modelVersion: "deterministic_oracle_v1" }, resolver: { resolvedThisRun: dueOutcomes.length, modelVersion: "deterministic_source_activity_v1" }, persistence: "batched", llmProvider:"none", gate: 12 });
-  } catch (error) { return NextResponse.json({ error: String(error), errors, memory: "persistent", persistence: "batched", llmProvider:"none", gate: 12 }, { status: 500 }); }
-}
-
-export async function GET() {
-  try { const signals = await getSignals(); const predictions = await getPredictions(); const outcomes = await getOutcomes(); const inferences = await getInferences(); return NextResponse.json({ sources, observations: (await getObservations()).slice(0,100), events:await getEventStats(), patterns:await getPatterns(), hypotheses:await getHypotheses(), hypothesisEvaluations:await getHypothesisEvaluations(), expectations:await getExpectations(), expectationOutcomes:await getExpectationOutcomes(), signals,inferences,predictions,outcomes,calibration:calibrationSummary(predictions,outcomes),entities:await getEntityStats(),graph:await getGraphStats(),analyst:{detectorCount:8,persistedSignalKinds:[...new Set(signals.map(signal=>signal.kind))]},inference:{persisted:inferences.length,modelVersion:"deterministic_signal_interpretation_v1"},oracle:{openPredictions:predictions.filter(prediction=>prediction.status==="open").length,modelVersion:"deterministic_oracle_v1"},resolver:{resolvedPredictions:outcomes.length,modelVersion:"deterministic_source_activity_v1"},memory:"persistent",persistence:"batched",llmProvider:"none",gate:12}); }
-  catch (error) { return NextResponse.json({ error:String(error),memory:"persistent",persistence:"batched",llmProvider:"none",gate:12 },{status:500}); }
-}
+export async function GET(){try{const signals=await getSignals(),predictions=await getPredictions(),outcomes=await getOutcomes(),inferences=await getInferences();return NextResponse.json({sources,observations:(await getObservations()).slice(0,100),events:await getEventStats(),eventChains:await getEventLinkStats(),patterns:await getPatterns(),hypotheses:await getHypotheses(),hypothesisEvaluations:await getHypothesisEvaluations(),expectations:await getExpectations(),expectationOutcomes:await getExpectationOutcomes(),signals,inferences,predictions,outcomes,calibration:calibrationSummary(predictions,outcomes),entities:await getEntityStats(),graph:await getGraphStats(),memory:"persistent",persistence:"batched",llmProvider:"none",gate:13});}catch(error){return NextResponse.json({error:String(error),memory:"persistent",persistence:"batched",llmProvider:"none",gate:13},{status:500});}}
