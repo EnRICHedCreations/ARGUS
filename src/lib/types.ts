@@ -48,6 +48,20 @@ export type Prediction = {
   details: Record<string, unknown>;
 };
 
+export type Outcome = {
+  id: string;
+  predictionId: string;
+  resolvedAt: string;
+  outcome: boolean;
+  actualValue: number;
+  targetValue: number;
+  brierScore: number;
+  absoluteError: number;
+  resolutionMethod: "deterministic_source_activity_v1";
+  evidenceObservationIds: string[];
+  details: Record<string, unknown>;
+};
+
 export type Source = {
   id: string;
   name: string;
