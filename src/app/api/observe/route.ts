@@ -8,7 +8,8 @@ import { deriveInferences } from "@/lib/inference";
 import { getInferences, rememberInferences } from "@/lib/inference-store";
 import { generatePredictions } from "@/lib/oracle";
 import { deriveRelationships } from "@/lib/relationships";
-import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getOutcomes, getPredictions, getSignals, remember, rememberEntityGraph, rememberOutcomes, rememberPredictions, rememberSignals } from "@/lib/memory";
+import { rememberEntityGraphV2 } from "@/lib/graph-memory";
+import { getAnalystEvidence, getEntityStats, getGraphStats, getObservations, getOutcomes, getPredictions, getSignals, remember, rememberOutcomes, rememberPredictions, rememberSignals } from "@/lib/memory";
 import { sources } from "@/lib/sources";
 
 export async function POST() {
@@ -30,7 +31,7 @@ export async function POST() {
       const entities = extractEntities(observation);
       return { observation, entities, relationships: deriveRelationships(observation, entities) };
     });
-    try { await rememberEntityGraph(graphEntries); } catch (error) { errors.push(`graph:batch: ${String(error)}`); }
+    try { await rememberEntityGraphV2(graphEntries); } catch (error) { errors.push(`graph:batch: ${String(error)}`); }
 
     const all = await getObservations();
     const legacySignals = sources.map(source => detectVolumeSpike(source.id, all)).filter((signal): signal is NonNullable<typeof signal> => signal != null);
