@@ -46,7 +46,9 @@ function normalize(value: string) {
 function makeCandidate(canonicalName: string, entityType: EntityCandidate["entityType"], mentionText: string, confidence: number): EntityCandidate {
   const normalizedName = normalize(canonicalName);
   return {
-    id: createHash("sha256").update(`entity\n${entityType}\n${normalizedName}`).digest("hex").slice(0, 24),
+    // Keep the original deterministic identity contract: normalized canonical name defines identity.
+    // Changing this would fork already-persisted entities and violate temporal continuity.
+    id: createHash("sha256").update(`entity\n${normalizedName}`).digest("hex").slice(0, 24),
     canonicalName, normalizedName, entityType, mentionText, confidence,
   };
 }
@@ -76,7 +78,6 @@ export function extractEntities(observation: Observation): EntityCandidate[] {
     add(found, target.canonical, target.type, alias, 1);
   }
 
-  // Structured NWS observations give ARGUS deterministic event, issuer and geography entities.
   if (observation.sourceId === "nws-active-alerts") {
     const event = structuredValue(observation.summary, "event");
     const area = structuredValue(observation.summary, "area");
