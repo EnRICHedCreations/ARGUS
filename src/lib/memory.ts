@@ -1,4 +1,4 @@
-import type { Observation, Signal } from "./types";
+import type { Observation, Prediction, Signal } from "./types";
 import type { EntityCandidate } from "./entities";
 import type { TemporalRelationship } from "./relationships";
 import type { AnalystEvidence } from "./analyst";
@@ -49,6 +49,39 @@ export async function rememberSignals(signals: Signal[]) {
   await request("argus_signals?on_conflict=id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(signals.map(signal => ({ id: signal.id, kind: signal.kind, source_id: signal.sourceId, observed_at: signal.observedAt, score: signal.score, baseline: signal.baseline, current_value: signal.current, evidence_observation_ids: signal.evidenceObservationIds, details: signal.details ?? {} }))) });
 }
 
+export async function rememberPredictions(predictions: Prediction[]) {
+  if (!predictions.length) return;
+  await request("argus_predictions?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify(predictions.map(prediction => ({
+      id: prediction.id,
+      prediction_type: prediction.predictionType,
+      subject_scope: prediction.subjectScope,
+      statement: prediction.statement,
+      predicted_at: prediction.predictedAt,
+      horizon_hours: prediction.horizonHours,
+      resolves_at: prediction.resolvesAt,
+      probability: prediction.probability,
+      status: prediction.status,
+      model_version: prediction.modelVersion,
+      evidence_signal_ids: prediction.evidenceSignalIds,
+      evidence_observation_ids: prediction.evidenceObservationIds,
+      details: prediction.details,
+    }))),
+  });
+
+  const evidence = predictions.flatMap(prediction => [
+    ...prediction.evidenceSignalIds.map(evidenceId => ({ prediction_id: prediction.id, evidence_type: "signal", evidence_id: evidenceId })),
+    ...prediction.evidenceObservationIds.map(evidenceId => ({ prediction_id: prediction.id, evidence_type: "observation", evidence_id: evidenceId })),
+  ]);
+  if (evidence.length) await request("argus_prediction_evidence?on_conflict=prediction_id,evidence_type,evidence_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify(evidence),
+  });
+}
+
 export async function rememberEntityGraph(entries: Array<{ observation: Observation; entities: EntityCandidate[]; relationships: TemporalRelationship[] }>) {
   const entityRows = new Map<string, Record<string, unknown>>();
   const aliasRows = new Map<string, Record<string, unknown>>();
@@ -83,6 +116,25 @@ export async function getAnalystEvidence(): Promise<AnalystEvidence> {
     entityLinks: entityRows.map(row => ({ observationId: String(row.observation_id), entityId: String(row.entity_id) })),
     relationships: relationshipRows.map(row => ({ id: String(row.id), subjectEntityId: String(row.subject_entity_id), objectEntityId: row.object_entity_id == null ? undefined : String(row.object_entity_id), objectEventId: row.object_event_id == null ? undefined : String(row.object_event_id), relationshipType: String(row.relationship_type), validFrom: String(row.valid_from), evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [] })),
   };
+}
+
+export async function getPredictions(): Promise<Prediction[]> {
+  const rows = (await request("argus_predictions?select=id,prediction_type,subject_scope,statement,predicted_at,horizon_hours,resolves_at,probability,status,model_version,evidence_signal_ids,evidence_observation_ids,details&order=predicted_at.desc&limit=1000") ?? []) as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    id: String(row.id),
+    predictionType: "source_activity_elevated",
+    subjectScope: String(row.subject_scope),
+    statement: String(row.statement),
+    predictedAt: String(row.predicted_at),
+    horizonHours: Number(row.horizon_hours),
+    resolvesAt: String(row.resolves_at),
+    probability: Number(row.probability),
+    status: String(row.status) as Prediction["status"],
+    modelVersion: "deterministic_oracle_v1",
+    evidenceSignalIds: Array.isArray(row.evidence_signal_ids) ? row.evidence_signal_ids.map(String) : [],
+    evidenceObservationIds: Array.isArray(row.evidence_observation_ids) ? row.evidence_observation_ids.map(String) : [],
+    details: row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {},
+  }));
 }
 
 export async function getGraphStats() {
